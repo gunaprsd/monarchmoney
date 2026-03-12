@@ -9,7 +9,8 @@ from datetime import datetime, date, timedelta
 from typing import Any, Dict, List, Optional, Union
 
 import oathtool
-from aiohttp import ClientSession, FormData
+import ssl
+from aiohttp import ClientSession, TCPConnector, FormData
 from aiohttp.client import DEFAULT_TIMEOUT
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
@@ -24,7 +25,7 @@ SESSION_FILE = f"{SESSION_DIR}/mm_session.pickle"
 
 
 class MonarchMoneyEndpoints(object):
-    BASE_URL = "https://api.monarchmoney.com"
+    BASE_URL = "https://api.monarch.com"
 
     @classmethod
     def getLoginEndpoint(cls) -> str:
@@ -62,7 +63,7 @@ class MonarchMoney(object):
             "Accept": "application/json",
             "Client-Platform": "web",
             "Content-Type": "application/json",
-            "User-Agent": "MonarchMoneyAPI (https://github.com/hammem/monarchmoney)",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         }
         if token:
             self._headers["Authorization"] = f"Token {token}"
@@ -2689,7 +2690,7 @@ class MonarchMoney(object):
         form.add_field("files", csv_content, filename=filename, content_type="text/csv")
         form.add_field("account_files_mapping", json.dumps({filename: account_id}))
 
-        async with ClientSession(headers=self._headers) as session:
+        async with ClientSession(headers=self._headers, connector=TCPConnector(ssl=ssl.create_default_context())) as session:
             resp = await session.post(
                 MonarchMoneyEndpoints.getAccountBalanceHistoryUploadEndpoint(),
                 json=form,
@@ -2851,7 +2852,7 @@ class MonarchMoney(object):
         if mfa_secret_key:
             data["totp"] = oathtool.generate_otp(mfa_secret_key)
 
-        async with ClientSession(headers=self._headers) as session:
+        async with ClientSession(headers=self._headers, connector=TCPConnector(ssl=ssl.create_default_context())) as session:
             async with session.post(
                 MonarchMoneyEndpoints.getLoginEndpoint(), json=data
             ) as resp:
@@ -2880,7 +2881,7 @@ class MonarchMoney(object):
             "username": email,
         }
 
-        async with ClientSession(headers=self._headers) as session:
+        async with ClientSession(headers=self._headers, connector=TCPConnector(ssl=ssl.create_default_context())) as session:
             async with session.post(
                 MonarchMoneyEndpoints.getLoginEndpoint(), json=data
             ) as resp:

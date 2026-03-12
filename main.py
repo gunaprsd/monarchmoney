@@ -1,98 +1,131 @@
 import asyncio
-import os
 import json
+from pathlib import Path
 
 from monarchmoney import MonarchMoney
 
 _SESSION_FILE_ = ".mm/mm_session.pickle"
 
 
-def main() -> None:
-    # Use session file
+async def get_mm() -> MonarchMoney:
+    """Load saved session, or use token from env/file, or interactive login."""
+    Path(".mm").mkdir(exist_ok=True)
     mm = MonarchMoney(session_file=_SESSION_FILE_)
-    asyncio.run(mm.interactive_login())
+
+    # Option 1: token stored in .mm/token.txt (for Google SSO users)
+    token_file = Path(".mm/token.txt")
+    if token_file.exists():
+        token = token_file.read_text().strip()
+        print("Loading token from .mm/token.txt...")
+        mm.set_token(token)
+        mm._headers["Authorization"] = f"Token {token}"
+        mm.save_session()
+        print(f"Session saved to {_SESSION_FILE_}")
+        return mm
+
+    # Option 2: existing saved session
+    if Path(_SESSION_FILE_).exists():
+        print(f"Loading saved session from {_SESSION_FILE_}...")
+        mm.load_session()
+        return mm
+
+    # Option 3: interactive login (email/password accounts only)
+    print("No saved session found. Starting interactive login...")
+    await mm.interactive_login()
+    mm.save_session()
+    print(f"Session saved to {_SESSION_FILE_}")
+    return mm
+
+
+async def run() -> None:
+    mm = await get_mm()
 
     # Subscription details
-    subs = asyncio.run(mm.get_subscription_details())
-    print(subs)
+    subs = await mm.get_subscription_details()
+    print("Subscription:", subs)
 
     # Accounts
-    accounts = asyncio.run(mm.get_accounts())
-    with open("data.json", "w") as outfile:
-        json.dump(accounts, outfile)
+    accounts = await mm.get_accounts()
+    with open("data.json", "w") as f:
+        json.dump(accounts, f, indent=2)
+    print(f"Accounts saved to data.json")
 
     # Institutions
-    institutions = asyncio.run(mm.get_institutions())
-    with open("institutions.json", "w") as outfile:
-        json.dump(institutions, outfile)
+    institutions = await mm.get_institutions()
+    with open("institutions.json", "w") as f:
+        json.dump(institutions, f, indent=2)
 
     # Budgets
-    budgets = asyncio.run(mm.get_budgets())
-    with open("budgets.json", "w") as outfile:
-        json.dump(budgets, outfile, indent=4)
+    budgets = await mm.get_budgets()
+    with open("budgets.json", "w") as f:
+        json.dump(budgets, f, indent=4)
+    print(f"Budgets saved to budgets.json")
 
     # Transactions summary
-    transactions_summary = asyncio.run(mm.get_transactions_summary())
-    with open("transactions_summary.json", "w") as outfile:
-        json.dump(transactions_summary, outfile)
+    transactions_summary = await mm.get_transactions_summary()
+    with open("transactions_summary.json", "w") as f:
+        json.dump(transactions_summary, f, indent=2)
 
-    # # Transaction categories
-    categories = asyncio.run(mm.get_transaction_categories())
-    with open("categories.json", "w") as outfile:
-        json.dump(categories, outfile)
+    # Transaction categories
+    categories = await mm.get_transaction_categories()
+    with open("categories.json", "w") as f:
+        json.dump(categories, f, indent=2)
 
-    income_categories = dict()
-    for c in categories.get("categories"):
-        if c.get("group").get("type") == "income":
-            print(
-                f'{c.get("group").get("type")} - {c.get("group").get("name")} - {c.get("name")}'
-            )
-            income_categories[c.get("name")] = 0
+    income_categories = {}
+    expense_category_groups = {}
 
-    expense_category_groups = dict()
-    for c in categories.get("categories"):
-        if c.get("group").get("type") == "expense":
-            print(
-                f'{c.get("group").get("type")} - {c.get("group").get("name")} - {c.get("name")}'
-            )
-            expense_category_groups[c.get("group").get("name")] = 0
+    for c in categories.get("categories", []):
+        group_type = c.get("group", {}).get("type")
+        group_name = c.get("group", {}).get("name")
+        cat_name = c.get("name")
+        if group_type == "income":
+            print(f'income - {group_name} - {cat_name}')
+            income_categories[cat_name] = 0
+        elif group_type == "expense":
+            print(f'expense - {group_name} - {cat_name}')
+            expense_category_groups[group_name] = 0
 
     # Transactions
-    transactions = asyncio.run(mm.get_transactions(limit=10))
-    with open("transactions.json", "w") as outfile:
-        json.dump(transactions, outfile)
+    transactions = await mm.get_transactions(limit=10)
+    with open("transactions.json", "w") as f:
+        json.dump(transactions, f, indent=2)
+    print(f"Last 10 transactions saved to transactions.json")
 
-    # Cashflow
-    cashflow = asyncio.run(
-        mm.get_cashflow(start_date="2023-10-01", end_date="2023-10-31")
-    )
-    with open("cashflow.json", "w") as outfile:
-        json.dump(cashflow, outfile)
+    # Cashflow (current month)
+    from datetime import date
+    today = date.today()
+    start = today.replace(day=1).isoformat()
+    end = today.isoformat()
+    cashflow = await mm.get_cashflow(start_date=start, end_date=end)
+    with open("cashflow.json", "w") as f:
+        json.dump(cashflow, f, indent=2)
 
-    for c in cashflow.get("summary"):
+    for c in cashflow.get("summary", []):
+        s = c.get("summary", {})
+        savings_rate = s.get("savingsRate") or 0
         print(
-            f'Income: {c.get("summary").get("sumIncome")} '
-            f'Expense: {c.get("summary").get("sumExpense")} '
-            f'Savings: {c.get("summary").get("savings")} '
-            f'({c.get("summary").get("savingsRate"):.0%})'
+            f'Income: {s.get("sumIncome")}  '
+            f'Expense: {s.get("sumExpense")}  '
+            f'Savings: {s.get("savings")}  '
+            f'({savings_rate:.0%})'
         )
 
-    for c in cashflow.get("byCategory"):
-        if c.get("groupBy").get("category").get("group").get("type") == "income":
-            income_categories[c.get("groupBy").get("category").get("name")] += c.get(
-                "summary"
-            ).get("sum")
+    for c in cashflow.get("byCategory", []):
+        cat = c.get("groupBy", {}).get("category", {})
+        if cat.get("group", {}).get("type") == "income":
+            name = cat.get("name")
+            if name in income_categories:
+                income_categories[name] += c.get("summary", {}).get("sum", 0)
 
-    print()
-    for c in cashflow.get("byCategoryGroup"):
-        if c.get("groupBy").get("categoryGroup").get("type") == "expense":
-            expense_category_groups[
-                c.get("groupBy").get("categoryGroup").get("name")
-            ] += c.get("summary").get("sum")
+    for c in cashflow.get("byCategoryGroup", []):
+        cg = c.get("groupBy", {}).get("categoryGroup", {})
+        if cg.get("type") == "expense":
+            name = cg.get("name")
+            if name in expense_category_groups:
+                expense_category_groups[name] += c.get("summary", {}).get("sum", 0)
 
-    print(income_categories)
-    print()
-    print(expense_category_groups)
+    print("\nIncome by category:", income_categories)
+    print("\nExpense by group:", expense_category_groups)
 
 
-main()
+asyncio.run(run())
